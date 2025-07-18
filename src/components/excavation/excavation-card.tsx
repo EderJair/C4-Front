@@ -6,6 +6,7 @@ import { useState } from 'react';
 interface ExcavationCardProps {
   excavation: ExcavationData;
   onUpdate: () => void;
+  onViewRings?: () => void;
 }
 
 const statusColors = {
@@ -34,7 +35,7 @@ const soilTypeLabels = {
   other: 'Otro'
 };
 
-export default function ExcavationCard({ excavation, onUpdate }: ExcavationCardProps) {
+export default function ExcavationCard({ excavation, onUpdate, onViewRings }: ExcavationCardProps) {
   const [showDetails, setShowDetails] = useState(false);
 
   const totalCost = (excavation.materialCost || 0) + (excavation.equipmentCost || 0) + (excavation.laborCost || 0);
@@ -84,7 +85,7 @@ export default function ExcavationCard({ excavation, onUpdate }: ExcavationCardP
           <div className="text-center p-3 bg-gray-50 rounded-lg">
             <p className="text-sm text-gray-500">Volumen</p>
             <p className="text-lg font-semibold text-gray-900">
-              {excavation.excavationVolume ? `${excavation.excavationVolume.toFixed(2)} m³` : 'N/A'}
+              {excavation.excavationVolume ? `${Number(excavation.excavationVolume).toFixed(2)} m³` : 'N/A'}
             </p>
           </div>
           <div className="text-center p-3 bg-gray-50 rounded-lg">
@@ -100,13 +101,13 @@ export default function ExcavationCard({ excavation, onUpdate }: ExcavationCardP
           {excavation.excavationDepth && (
             <div className="flex justify-between text-sm">
               <span className="text-gray-500">Profundidad:</span>
-              <span className="font-medium">{excavation.excavationDepth.toFixed(2)} m</span>
+              <span className="font-medium">{Number(excavation.excavationDepth).toFixed(2)} m</span>
             </div>
           )}
           {excavation.excavationArea && (
             <div className="flex justify-between text-sm">
               <span className="text-gray-500">Área:</span>
-              <span className="font-medium">{excavation.excavationArea.toFixed(2)} m²</span>
+              <span className="font-medium">{Number(excavation.excavationArea).toFixed(2)} m²</span>
             </div>
           )}
           {excavation.soilType && (
@@ -224,6 +225,36 @@ export default function ExcavationCard({ excavation, onUpdate }: ExcavationCardP
             )}
           </div>
         )}
+
+        {/* Botones de acción */}
+        <div className="flex justify-between items-center pt-4 border-t border-gray-100">
+          <button
+            onClick={() => setShowDetails(!showDetails)}
+            className="text-blue-600 hover:text-blue-800 text-sm font-medium transition-colors"
+          >
+            {showDetails ? 'Ocultar detalles' : 'Ver detalles'}
+          </button>
+          
+          <div className="flex gap-2">
+            {onViewRings && (
+              <button
+                onClick={onViewRings}
+                className="bg-blue-600 text-white px-3 py-1 rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium flex items-center gap-1"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                </svg>
+                Ver Anillos
+              </button>
+            )}
+            <button
+              onClick={onUpdate}
+              className="bg-gray-600 text-white px-3 py-1 rounded-lg hover:bg-gray-700 transition-colors text-sm font-medium"
+            >
+              Editar
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -74,6 +74,8 @@ export default function LoginForm() {
     }
   };
 
+  
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-black via-gray-900 to-slate-900 flex items-center justify-center px-4 sm:px-6 lg:px-8">
       {/* Efectos de fondo simples */}

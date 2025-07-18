@@ -1,0 +1,35 @@
+# .nextignore
+# Archivos que Next.js debe ignorar
+
+# Archivos de prueba
+test-*.js
+test-*.ts
+*-test.js
+*-test.ts
+debug-*.js
+debug-*.ts
+
+# Archivos temporales
+temp/
+tmp/
+*.tmp
+*.temp
+
+# Archivos de Python eliminados
+*.py
+*.pyc
+__pycache__/
+
+# Archivos de configuración local
+.env.local.backup
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# Archivos de prueba PDF
+test-excavation-report.txt
+simple-test.js
+debug-login.js
+test-login.js

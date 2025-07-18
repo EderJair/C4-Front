@@ -22,6 +22,22 @@ apiClient.interceptors.request.use(
         config.headers.Authorization = `Bearer ${token}`;
       }
     }
+    
+    // Log para debugging
+    console.log('🌐 API Request:', {
+      method: config.method?.toUpperCase(),
+      url: config.url,
+      baseURL: config.baseURL,
+      data: config.data,
+      fullURL: `${config.baseURL}${config.url}`,
+      headers: config.headers
+    });
+    
+    // Log detallado de los datos enviados
+    if (config.data) {
+      console.log('📦 Request Data Details:', JSON.stringify(config.data, null, 2));
+    }
+    
     return config;
   },
   (error: any) => {
@@ -33,10 +49,29 @@ apiClient.interceptors.request.use(
 // Interceptor para manejo de respuestas
 apiClient.interceptors.response.use(
   (response: any) => {
+    console.log('✅ API Response:', {
+      status: response.status,
+      url: response.config.url,
+      data: response.data
+    });
     return response;
   },
   (error: any) => {
-    console.error('API Response Error:', error.response?.status, error.response?.data, error.message);
+    console.error('❌ API Response Error:', {
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      url: error.config?.url,
+      fullURL: `${error.config?.baseURL}${error.config?.url}`,
+      method: error.config?.method?.toUpperCase(),
+      data: error.response?.data,
+      message: error.message,
+      requestData: error.config?.data
+    });
+    
+    // Log detallado del error del backend
+    if (error.response?.data) {
+      console.error('🔍 Backend Error Details:', JSON.stringify(error.response.data, null, 2));
+    }
     
     // Manejo de errores globales
     if (error.response?.status === 401) {
@@ -50,6 +85,7 @@ apiClient.interceptors.response.use(
     
     // Personalizar mensaje de error
     const errorMessage = error.response?.data?.message || 
+                        error.response?.data?.error ||
                         error.message || 
                         'Ha ocurrido un error inesperado';
     

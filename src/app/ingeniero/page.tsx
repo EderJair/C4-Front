@@ -42,11 +42,26 @@ export default function IngenieeroDashboard() {
   const loadMyProjects = async () => {
     try {
       setLoading(true);
-      // Proyectos del ingeniero logueado
-      const projects = await api.getProjects(); // Después filtraremos por ingeniero
+      
+      if (!user?.id) {
+        console.error('No user ID available');
+        return;
+      }
+
+      console.log(`🔍 Cargando proyectos para el ingeniero ${user.id}...`);
+      
+      // Obtener solo los proyectos asignados al ingeniero logueado
+      const projects = await api.getEngineerProjects(user.id);
+      
+      console.log(`✅ Proyectos cargados para el ingeniero:`, {
+        engineerId: user.id,
+        projectCount: projects.length,
+        projects: projects.map(p => ({ id: p.id, name: p.name }))
+      });
+      
       setProjects(projects);
     } catch (error) {
-      console.error('Error loading projects:', error);
+      console.error('❌ Error loading engineer projects:', error);
     } finally {
       setLoading(false);
     }

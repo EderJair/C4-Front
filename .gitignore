@@ -31,7 +31,10 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # env files (can opt-in for committing if needed)
-.env*
+.env*.local
+.env.local
+.env
+!.env.example
 
 # vercel
 .vercel
@@ -39,3 +42,27 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Archivos de prueba y debug
+test-*.js
+test-*.ts
+*-test.js
+*-test.ts
+debug-*.js
+debug-*.ts
+simple-test.js
+debug-login.js
+test-login.js
+test-excavation-report.txt
+
+# Archivos temporales
+temp/
+tmp/
+*.tmp
+*.temp
+
+# Python eliminado
+*.py
+*.pyc
+__pycache__/
+extract_pdf.py

@@ -1,0 +1,13 @@
+{
+  "name": "cleanup-project",
+  "version": "1.0.0",
+  "description": "Script de limpieza para el proyecto PDF",
+  "scripts": {
+    "clean": "npm run clean:cache && npm run clean:temp && npm run clean:test",
+    "clean:cache": "rm -rf .next && rm -rf node_modules/.cache",
+    "clean:temp": "rm -rf temp && rm -rf tmp",
+    "clean:test": "rm -f test-*.js && rm -f test-*.ts && rm -f *-test.js && rm -f debug-*.js && rm -f simple-test.js && rm -f test-excavation-report.txt",
+    "clean:all": "npm run clean && rm -rf node_modules && npm install",
+    "fresh-start": "npm run clean:all && npm run dev"
+  }
+}

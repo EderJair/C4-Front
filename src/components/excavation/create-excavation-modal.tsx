@@ -65,6 +65,14 @@ export default function CreateExcavationModal({ isOpen, onClose, onSuccess, proj
   const [selectedEquipment, setSelectedEquipment] = useState<string[]>([]);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [useFileData, setUseFileData] = useState(false);
+  const [isProcessingPDF, setIsProcessingPDF] = useState(false);
+  const [processId, setProcessId] = useState<string | null>(null);
+  const [processingStatus, setProcessingStatus] = useState<'idle' | 'processing' | 'analyzing' | 'completed'>('idle');
+  const [processingProgress, setProcessingProgress] = useState<number>(0);
+  const [extractedData, setExtractedData] = useState<any>(null);
+  const [pdfType, setPdfType] = useState<string>('excavation_report');
+  const [pdfDescription, setPdfDescription] = useState<string>('');
+  const [pdfNotes, setPdfNotes] = useState<string>('');
 
   const {
     register,
@@ -101,28 +109,237 @@ export default function CreateExcavationModal({ isOpen, onClose, onSuccess, proj
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
+      if (file.type !== 'application/pdf') {
+        toast.error('Solo se permiten archivos PDF');
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) { // 10MB limit
+        toast.error('El archivo no debe superar los 10MB');
+        return;
+      }
       setUploadedFile(file);
-      toast.success('Archivo subido correctamente');
+      toast.success(`Archivo subido correctamente: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
     }
   };
 
   const onSubmit = async (data: ExcavationFormData) => {
     try {
       const excavationData: CreateExcavationData = {
-        projectPhaseId: projectId,
+        projectPhaseId: 1, // Usar fase por defecto que existe en el backend
         ...data,
         equipment: selectedEquipment.length > 0 ? selectedEquipment : undefined
       };
 
-      await onSuccess(excavationData);
-      reset();
-      setSelectedEquipment([]);
-      setUploadedFile(null);
-      setUseFileData(false);
+      console.log('🚀 Creando excavación con datos:', excavationData);
+      
+      // Si los datos vienen del PDF, mostrar un mensaje diferente
+      if (extractedData) {
+        toast.loading('Creando excavación con datos reales del PDF...', {
+          description: 'Guardando los datos verificados por el ingeniero'
+        });
+      } else {
+        const loadingToastId = toast.loading('Creando excavación...', {
+          description: 'Guardando los datos ingresados manualmente'
+        });
+
+        try {
+          await onSuccess(excavationData);
+          
+          // Cerrar el toast de loading
+          toast.dismiss(loadingToastId);
+          
+          // Mostrar toast de éxito
+          toast.success('Excavación creada exitosamente');
+          
+          // Limpiar todo al finalizar
+          reset();
+          setSelectedEquipment([]);
+          setUploadedFile(null);
+          setUseFileData(false);
+          setExtractedData(null);
+          setProcessId(null);
+          setProcessingStatus('idle');
+          setProcessingProgress(0);
+          setIsProcessingPDF(false);
+          onClose();
+        } catch (error) {
+          // Cerrar el toast de loading en caso de error
+          toast.dismiss(loadingToastId);
+          // El error ya se maneja en la función onSuccess, pero aseguramos cerrar el loading
+        }
+      }
     } catch (error) {
       console.error('Error creating excavation:', error);
       toast.error('Error al crear la excavación');
     }
+  };
+
+  const processPDF = async () => {
+    if (!uploadedFile) {
+      toast.error('Por favor selecciona un archivo PDF');
+      return;
+    }
+
+    try {
+      setIsProcessingPDF(true);
+      setProcessingStatus('processing');
+      setProcessingProgress(0);
+      
+      // Crear FormData para enviar el archivo
+      const formData = new FormData();
+      formData.append('pdf', uploadedFile);
+      formData.append('projectPhaseId', '1');
+      formData.append('pdfType', pdfType);
+      formData.append('description', pdfDescription || 'Reporte de excavación procesado automáticamente');
+      formData.append('notes', pdfNotes || 'Procesado desde el modal de excavación');
+
+      // Toast de inicio del procesamiento
+      toast.loading('Procesando PDF...', {
+        id: 'processing-pdf',
+        description: '📄 Extrayendo texto REAL del PDF y procesando con IA - esto puede tomar unos segundos'
+      });
+
+      // Obtener token de autenticación
+      const token = localStorage.getItem('token');
+      if (!token) {
+        throw new Error('Token de autenticación no encontrado');
+      }
+
+      // Enviar el PDF al backend
+      const response = await fetch('/api/excavation/process-pdf', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          // No agregar Content-Type, el navegador lo agrega automáticamente para FormData
+        },
+        body: formData
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Error al procesar el PDF');
+      }
+
+      const result = await response.json();
+      
+      // Guardar el processId para consultar el estado
+      setProcessId(result.data.processId);
+
+      toast.success('PDF procesado exitosamente', {
+        id: 'processing-pdf',
+        description: '✅ Extracción REAL completada - consultando datos estructurados'
+      });
+
+      // Consultar el estado del procesamiento
+      await checkProcessingStatus(result.data.processId);
+
+    } catch (error) {
+      console.error('Error processing PDF:', error);
+      toast.error('Error al procesar el PDF', {
+        id: 'processing-pdf',
+        description: error instanceof Error ? error.message : 'Error desconocido'
+      });
+    } finally {
+      setIsProcessingPDF(false);
+      if (processingStatus !== 'completed') {
+        setProcessingStatus('idle');
+        setProcessingProgress(0);
+      }
+    }
+  };
+
+  const checkProcessingStatus = async (processId: string) => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        throw new Error('Token de autenticación no encontrado');
+      }
+
+      const response = await fetch(`/api/excavation/process-pdf/status/${processId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Error al consultar el estado del procesamiento');
+      }
+
+      const statusData = await response.json();
+      console.log('Estado del procesamiento:', statusData);
+      
+      // Actualizar estado visual
+      setProcessingStatus(statusData.data.status);
+      setProcessingProgress(statusData.data.progress || 0);
+      
+      console.log('🔍 Estado recibido:', statusData.data.status);
+      console.log('🔍 Success:', statusData.success);
+      console.log('🔍 Extracted data:', statusData.data.extractedData);
+      
+      if (statusData.success && statusData.data.status === 'completed') {
+        const extractedText = statusData.data.extractedText;
+        
+        console.log('📋 Texto extraído del PDF:', extractedText);
+        
+        toast.success('PDF procesado exitosamente', {
+          description: `✅ TEXTO EXTRAÍDO Y ENVIADO A N8N: ${statusData.data.textLength} caracteres extraídos del PDF real y enviados a tu webhook.`,
+          duration: 10000
+        });
+        
+        // Mostrar el texto extraído en el modal
+        setExtractedData({
+          text: extractedText,
+          length: statusData.data.textLength,
+          fileInfo: statusData.data.fileInfo
+        });
+        
+        // Resetear estados del procesamiento
+        setProcessingStatus('completed');
+        setProcessingProgress(100);
+        setIsProcessingPDF(false);
+        setProcessId(null);
+        setUploadedFile(null);
+        
+      } else if (statusData.data.status === 'processing' || statusData.data.status === 'analyzing') {
+        const progressMessage = statusData.data.status === 'processing' 
+          ? 'Procesando PDF...' 
+          : 'Analizando contenido...';
+          
+        toast.info(progressMessage, {
+          description: `Progreso: ${statusData.data.progress}%`,
+          duration: 2000
+        });
+        
+        // Continuar consultando el estado cada 2 segundos
+        setTimeout(() => {
+          checkProcessingStatus(processId);
+        }, 2000);
+      } else {
+        toast.error('Error en el procesamiento', {
+          description: statusData.message || 'Estado desconocido'
+        });
+      }
+    } catch (error) {
+      console.error('Error checking status:', error);
+      toast.error('Error al consultar el estado', {
+        description: error instanceof Error ? error.message : 'Error desconocido'
+      });
+    }
+  };
+
+  // Función para limpiar todos los estados
+  const handleModalClose = () => {
+    reset();
+    setSelectedEquipment([]);
+    setUploadedFile(null);
+    setUseFileData(false);
+    setExtractedData(null);
+    setProcessId(null);
+    setProcessingStatus('idle');
+    setProcessingProgress(0);
+    setIsProcessingPDF(false);
+    onClose();
   };
 
   if (!isOpen) return null;
@@ -132,75 +349,199 @@ export default function CreateExcavationModal({ isOpen, onClose, onSuccess, proj
       <div className="bg-white/95 backdrop-blur-xl rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-white/20">
         <div className="p-6 border-b border-gray-200/50 backdrop-blur-xl bg-white/80">
           <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-bold text-gray-900">Agregar Información de Excavación</h2>
+            <h2 className="text-2xl font-bold text-gray-900">
+              Nueva Excavación
+            </h2>
             <button
-              onClick={onClose}
-              className="p-2 hover:bg-gray-100/50 rounded-lg transition-colors backdrop-blur-sm"
+              onClick={handleModalClose}
+              className="p-2 hover:bg-gray-100 rounded-full transition-colors"
             >
-              <svg className="w-6 h-6 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
           </div>
+          
+          {/* Tabs simplificados */}
+          <div className="mt-4 flex space-x-1 bg-gray-100/50 backdrop-blur-sm p-1 rounded-lg">
+            <button
+              onClick={() => setUseFileData(true)}
+              className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                useFileData 
+                  ? 'bg-white shadow-sm text-blue-600' 
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              � Extraer texto del PDF
+            </button>
+          </div>
         </div>
 
-        <div className="p-6 bg-white/90 backdrop-blur-xl">
-          {/* Opción de datos o archivo */}
-          <div className="mb-6 p-4 bg-blue-50/70 backdrop-blur-sm rounded-lg border border-blue-200/50">
-            <h3 className="font-semibold text-blue-900 mb-3">Método de entrada de datos</h3>
-            <div className="space-y-3">
-              <label className="flex items-center">
-                <input
-                  type="radio"
-                  name="dataMethod"
-                  checked={!useFileData}
-                  onChange={() => setUseFileData(false)}
-                  className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
-                />
-                <span className="ml-2 text-sm text-gray-700">Ingresar datos manualmente</span>
-              </label>
-              <label className="flex items-center">
-                <input
-                  type="radio"
-                  name="dataMethod"
-                  checked={useFileData}
-                  onChange={() => setUseFileData(true)}
-                  className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
-                />
-                <span className="ml-2 text-sm text-gray-700">Subir archivo PDF (extracción automática - próximamente)</span>
-              </label>
-            </div>
-          </div>
+        {/* Pestañas */}
+        <div className="flex border-b border-gray-200/50 bg-gray-50/50 rounded-t-lg">
+          <button
+            onClick={() => setUseFileData(false)}
+            className={`px-6 py-3 text-sm font-medium transition-colors ${
+              !useFileData
+                ? 'text-blue-600 border-b-2 border-blue-600 bg-white'
+                : 'text-gray-600 hover:text-gray-800'
+            }`}
+          >
+            📝 Formulario Manual
+          </button>
+          <button
+            onClick={() => setUseFileData(true)}
+            className={`px-6 py-3 text-sm font-medium transition-colors ${
+              useFileData
+                ? 'text-blue-600 border-b-2 border-blue-600 bg-white'
+                : 'text-gray-600 hover:text-gray-800'
+            }`}
+          >
+            📄 Subir PDF (Auto-llenar)
+          </button>
+        </div>
 
+        <div className="p-6">
           {/* Subida de archivo */}
           {useFileData && (
-            <div className="mb-6 p-4 border-2 border-dashed border-gray-300/50 rounded-lg bg-gray-50/50 backdrop-blur-sm">
-              <div className="text-center">
-                <svg className="w-12 h-12 text-gray-400 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                </svg>
-                <p className="text-sm text-gray-500 mb-2">Arrastra y suelta tu archivo PDF aquí, o</p>
-                <label className="cursor-pointer">
-                  <span className="text-blue-600 hover:text-blue-700 font-medium">selecciona un archivo</span>
-                  <input
-                    type="file"
-                    accept=".pdf"
-                    onChange={handleFileUpload}
-                    className="hidden"
-                  />
+            <div className="space-y-6">
+              <div className="border-2 border-dashed border-gray-300/50 rounded-lg p-6 text-center bg-gray-50/50 backdrop-blur-sm">
+                <input
+                  type="file"
+                  accept=".pdf"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                  id="pdf-upload"
+                />
+                <label
+                  htmlFor="pdf-upload"
+                  className="cursor-pointer flex flex-col items-center"
+                >
+                  <svg className="w-12 h-12 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <span className="text-lg font-medium text-gray-600">
+                    Subir PDF de Excavación
+                  </span>
+                  <span className="text-sm text-gray-500 mt-1">
+                    El texto se extraerá y enviará a n8n para procesamiento
+                  </span>
                 </label>
-                {uploadedFile && (
-                  <p className="text-sm text-green-600 mt-2">
-                    Archivo subido: {uploadedFile.name}
-                  </p>
-                )}
               </div>
+
+              {uploadedFile && (
+                <div className="bg-green-50/70 backdrop-blur-sm rounded-lg p-4 border border-green-200/50">
+                  <div className="flex items-center">
+                    <svg className="w-5 h-5 text-green-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span className="text-green-800 font-medium">
+                      {uploadedFile.name} ({(uploadedFile.size / 1024 / 1024).toFixed(2)} MB)
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Botón de procesamiento */}
+              <div className="flex justify-center">
+                <button
+                  onClick={processPDF}
+                  disabled={!uploadedFile || isProcessingPDF}
+                  className={`px-6 py-3 rounded-lg font-medium transition-all ${
+                    !uploadedFile || isProcessingPDF
+                      ? 'bg-gray-300 cursor-not-allowed text-gray-500'
+                      : 'bg-blue-600 hover:bg-blue-700 text-white shadow-lg hover:shadow-xl'
+                  }`}
+                >
+                  {isProcessingPDF ? (
+                    <>
+                      <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white inline" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Extrayendo texto...
+                    </>
+                  ) : (
+                    '� Extraer texto y enviar a n8n'
+                  )}
+                </button>
+              </div>
+
+              {/* Indicador de progreso */}
+              {isProcessingPDF && (
+                <div className="space-y-2">
+                  <div className="bg-blue-50/70 backdrop-blur-sm rounded-lg p-4 border border-blue-200/50">
+                    <div className="flex items-center mb-2">
+                      <svg className="animate-spin w-5 h-5 text-blue-500 mr-2" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      <span className="text-blue-800 font-medium">
+                        {processingStatus === 'processing' ? 'Extrayendo texto del PDF...' : 'Enviando a n8n...'}
+                      </span>
+                    </div>
+                    <div className="w-full bg-blue-200/50 rounded-full h-2">
+                      <div 
+                        className="bg-blue-600 h-2 rounded-full transition-all duration-500"
+                        style={{ width: `${processingProgress}%` }}
+                      ></div>
+                    </div>
+                    <div className="text-xs text-blue-600 mt-1">
+                      Progreso: {processingProgress}%
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Mostrar texto extraído y enviado a n8n */}
+              {extractedData && (
+                <div className="mb-6 p-4 bg-green-50/70 backdrop-blur-sm rounded-lg border border-green-200/50">
+                  <div className="flex items-start">
+                    <svg className="h-5 w-5 text-green-500 mt-0.5 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <div className="text-sm text-green-800 flex-1">
+                      <p className="font-medium">✅ PDF procesado y texto enviado a n8n</p>
+                      <p className="text-green-700 mt-1">
+                        <strong>Texto extraído:</strong> {extractedData.length} caracteres enviados al webhook
+                      </p>
+                      <div className="mt-2 text-xs text-green-600">
+                        <p>📡 Webhook: https://n8n-jose.up.railway.app/webhook-test/pdfexca</p>
+                        <p>📄 Archivo: {extractedData.fileInfo?.name} ({extractedData.fileInfo?.size} bytes)</p>
+                      </div>
+                      
+                      {/* Mostrar preview del texto extraído */}
+                      <div className="mt-3 p-3 bg-gray-100 rounded text-xs max-h-32 overflow-y-auto">
+                        <p className="font-medium text-gray-700 mb-1">📝 Preview del texto:</p>
+                        <p className="text-gray-600 whitespace-pre-wrap">
+                          {extractedData.text?.substring(0, 300)}...
+                        </p>
+                      </div>
+                      
+                      <div className="mt-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExtractedData(null);
+                            setProcessingStatus('idle');
+                            setProcessingProgress(0);
+                          }}
+                          className="text-xs text-green-600 hover:text-green-800 underline"
+                        >
+                          Procesar otro PDF
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
           {/* Formulario manual */}
           {!useFileData && (
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+              
               {/* Medidas y volumen */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
@@ -213,10 +554,9 @@ export default function CreateExcavationModal({ isOpen, onClose, onSuccess, proj
                     {...register('excavationDepth', { valueAsNumber: true })}
                     onBlur={calculateVolume}
                     className="w-full px-3 py-2 border border-gray-300/50 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white/80 backdrop-blur-sm"
-                    placeholder="0.00"
                   />
                   {errors.excavationDepth && (
-                    <p className="text-red-500 text-sm mt-1">{errors.excavationDepth.message}</p>
+                    <span className="text-red-500 text-sm">{errors.excavationDepth.message}</span>
                   )}
                 </div>
 
@@ -230,10 +570,9 @@ export default function CreateExcavationModal({ isOpen, onClose, onSuccess, proj
                     {...register('excavationArea', { valueAsNumber: true })}
                     onBlur={calculateVolume}
                     className="w-full px-3 py-2 border border-gray-300/50 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white/80 backdrop-blur-sm"
-                    placeholder="0.00"
                   />
                   {errors.excavationArea && (
-                    <p className="text-red-500 text-sm mt-1">{errors.excavationArea.message}</p>
+                    <span className="text-red-500 text-sm">{errors.excavationArea.message}</span>
                   )}
                 </div>
 
@@ -246,10 +585,9 @@ export default function CreateExcavationModal({ isOpen, onClose, onSuccess, proj
                     step="0.01"
                     {...register('excavationVolume', { valueAsNumber: true })}
                     className="w-full px-3 py-2 border border-gray-300/50 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white/80 backdrop-blur-sm"
-                    placeholder="0.00"
                   />
                   {errors.excavationVolume && (
-                    <p className="text-red-500 text-sm mt-1">{errors.excavationVolume.message}</p>
+                    <span className="text-red-500 text-sm">{errors.excavationVolume.message}</span>
                   )}
                 </div>
               </div>
@@ -277,39 +615,39 @@ export default function CreateExcavationModal({ isOpen, onClose, onSuccess, proj
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Equipos Utilizados
                 </label>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                   {commonEquipment.map(equipment => (
-                    <label key={equipment} className="flex items-center p-2 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer">
+                    <label key={equipment} className="flex items-center space-x-2">
                       <input
                         type="checkbox"
                         checked={selectedEquipment.includes(equipment)}
                         onChange={() => handleEquipmentChange(equipment)}
-                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                       />
-                      <span className="ml-2 text-sm text-gray-700">{equipment}</span>
+                      <span className="text-sm text-gray-700">{equipment}</span>
                     </label>
                   ))}
                 </div>
               </div>
 
-              {/* Costos */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Horas de Trabajo
-                  </label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    {...register('laborHours', { valueAsNumber: true })}
-                    className="w-full px-3 py-2 border border-gray-300/50 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white/80 backdrop-blur-sm"
-                    placeholder="0.0"
-                  />
-                  {errors.laborHours && (
-                    <p className="text-red-500 text-sm mt-1">{errors.laborHours.message}</p>
-                  )}
-                </div>
+              {/* Horas de trabajo */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Horas de Trabajo
+                </label>
+                <input
+                  type="number"
+                  step="0.1"
+                  {...register('laborHours', { valueAsNumber: true })}
+                  className="w-full px-3 py-2 border border-gray-300/50 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white/80 backdrop-blur-sm"
+                />
+                {errors.laborHours && (
+                  <span className="text-red-500 text-sm">{errors.laborHours.message}</span>
+                )}
+              </div>
 
+              {/* Costos */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Costo de Materiales ($)
@@ -319,10 +657,9 @@ export default function CreateExcavationModal({ isOpen, onClose, onSuccess, proj
                     step="0.01"
                     {...register('materialCost', { valueAsNumber: true })}
                     className="w-full px-3 py-2 border border-gray-300/50 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white/80 backdrop-blur-sm"
-                    placeholder="0.00"
                   />
                   {errors.materialCost && (
-                    <p className="text-red-500 text-sm mt-1">{errors.materialCost.message}</p>
+                    <span className="text-red-500 text-sm">{errors.materialCost.message}</span>
                   )}
                 </div>
 
@@ -335,10 +672,9 @@ export default function CreateExcavationModal({ isOpen, onClose, onSuccess, proj
                     step="0.01"
                     {...register('equipmentCost', { valueAsNumber: true })}
                     className="w-full px-3 py-2 border border-gray-300/50 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white/80 backdrop-blur-sm"
-                    placeholder="0.00"
                   />
                   {errors.equipmentCost && (
-                    <p className="text-red-500 text-sm mt-1">{errors.equipmentCost.message}</p>
+                    <span className="text-red-500 text-sm">{errors.equipmentCost.message}</span>
                   )}
                 </div>
 
@@ -351,36 +687,10 @@ export default function CreateExcavationModal({ isOpen, onClose, onSuccess, proj
                     step="0.01"
                     {...register('laborCost', { valueAsNumber: true })}
                     className="w-full px-3 py-2 border border-gray-300/50 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white/80 backdrop-blur-sm"
-                    placeholder="0.00"
                   />
                   {errors.laborCost && (
-                    <p className="text-red-500 text-sm mt-1">{errors.laborCost.message}</p>
+                    <span className="text-red-500 text-sm">{errors.laborCost.message}</span>
                   )}
-                </div>
-              </div>
-
-              {/* Fechas */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Fecha de Inicio
-                  </label>
-                  <input
-                    type="date"
-                    {...register('startDate')}
-                    className="w-full px-3 py-2 border border-gray-300/50 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white/80 backdrop-blur-sm"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Fecha de Finalización
-                  </label>
-                  <input
-                    type="date"
-                    {...register('endDate')}
-                    className="w-full px-3 py-2 border border-gray-300/50 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white/80 backdrop-blur-sm"
-                  />
                 </div>
               </div>
 
@@ -408,49 +718,40 @@ export default function CreateExcavationModal({ isOpen, onClose, onSuccess, proj
                 </label>
                 <textarea
                   {...register('notes')}
-                  rows={3}
+                  rows={4}
                   className="w-full px-3 py-2 border border-gray-300/50 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white/80 backdrop-blur-sm"
-                  placeholder="Observaciones, comentarios adicionales..."
+                  placeholder="Notas adicionales sobre la excavación..."
                 />
               </div>
 
               {/* Botones */}
-              <div className="flex justify-end space-x-3 pt-4 bg-white/70 backdrop-blur-sm rounded-lg p-4 border border-gray-200/50">
+              <div className="flex justify-end space-x-3 pt-4">
                 <button
                   type="button"
-                  onClick={onClose}
-                  className="px-4 py-2 text-gray-700 bg-white/80 hover:bg-gray-50/80 rounded-lg transition-colors backdrop-blur-sm border border-gray-200/50"
+                  onClick={handleModalClose}
+                  className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="px-6 py-2 bg-blue-600/90 hover:bg-blue-700/90 text-white rounded-lg transition-colors disabled:opacity-50 backdrop-blur-sm"
+                  className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
-                  {isSubmitting ? 'Guardando...' : 'Crear Excavación'}
+                  {isSubmitting ? (
+                    <>
+                      <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white inline" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Creando...
+                    </>
+                  ) : (
+                    'Crear Excavación'
+                  )}
                 </button>
               </div>
             </form>
-          )}
-
-          {/* Botón para archivo */}
-          {useFileData && (
-            <div className="flex justify-end space-x-3 pt-4 bg-white/70 backdrop-blur-sm rounded-lg p-4 border border-gray-200/50">
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-2 text-gray-700 bg-white/80 hover:bg-gray-50/80 rounded-lg transition-colors backdrop-blur-sm border border-gray-200/50"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={() => toast.info('Funcionalidad de extracción automática próximamente disponible')}
-                className="px-6 py-2 bg-purple-600/90 hover:bg-purple-700/90 text-white rounded-lg transition-colors backdrop-blur-sm"
-              >
-                Procesar Archivo
-              </button>
-            </div>
           )}
         </div>
       </div>
